@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ro"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ColetGo</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>.btn{background:#0d9488;color:#fff;border-radius:12px;padding:.55rem 1rem;font-weight:600}.btn:hover{background:#0f766e}
+.btn2{border:1px solid #e5e7eb;border-radius:12px;padding:.5rem .9rem}.inp{width:100%;border:1px solid #d1d5db;border-radius:12px;padding:.6rem .8rem}
+.card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:1rem}.badge{background:#ccfbf1;color:#0f766e;border-radius:999px;padding:.1rem .6rem;font-size:.75rem;font-weight:600}</style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+<header class="bg-white border-b sticky top-0 z-20"><div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-2">
+ <b class="text-xl text-teal-600">📦 ColetGo</b>
+ <nav class="flex items-center gap-2 text-sm">
+  <button class="btn2" onclick="show('search')">Caută</button>
+  <button class="btn2" onclick="show('post')">Postează</button>
+  <button class="btn2" id="bMine" onclick="show('mine')">Anunțurile mele</button>
+  <button class="btn" id="bAuth" onclick="authBtn()">Intră</button>
+ </nav></div></header>
+<div id="toast" class="hidden fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white rounded-xl px-4 py-2 text-sm"></div>
+
+<main class="max-w-5xl mx-auto px-4 py-6">
+ <section id="v-search">
+  <div class="card grid gap-2 md:grid-cols-5 mb-4">
+   <input id="qFrom" class="inp" placeholder="De unde?"><input id="qTo" class="inp" placeholder="Unde?">
+   <input id="qDate" type="date" class="inp">
+   <select id="qType" class="inp"><option value="">Curse + colete</option><option value="trip">Doar curse</option><option value="request">Doar colete</option></select>
+   <button class="btn" onclick="search()">Caută</button></div>
+  <div id="list" class="grid gap-3 md:grid-cols-2"></div>
+ </section>
+
+ <section id="v-post" class="hidden max-w-xl mx-auto">
+  <h2 class="text-2xl font-bold mb-1">Postează un anunț</h2>
+  <p class="text-sm text-slate-500 mb-3">Primul anunț este gratuit. Următoarele costă 5 lei (plată cu cardul, Stripe).</p>
+  <form id="fPost" class="card grid gap-3" onsubmit="post(event)">
+   <select name="type" class="inp"><option value="trip">🚗 Merg într-o cursă (pot duce colete)</option><option value="request">📦 Vreau să trimit un colet</option></select>
+   <div class="grid grid-cols-2 gap-3"><input name="from_city" class="inp" placeholder="Plecare" required><input name="to_city" class="inp" placeholder="Destinație" required></div>
+   <div class="grid grid-cols-2 gap-3"><input name="travel_date" type="date" class="inp"><input name="travel_time" type="time" class="inp"></div>
+   <div class="grid grid-cols-2 gap-3"><select name="transport" class="inp"><option>Mașină personală</option><option>Tren</option></select>
+    <select name="size" class="inp"><option>Mic</option><option selected>Mediu</option><option>Mare</option></select></div>
+   <textarea name="description" rows="3" class="inp" placeholder="Spațiu disponibil sau ce trimiți (ex: Oală cu sarmale și haine groase)" required></textarea>
+   <input name="price_text" class="inp" placeholder="Preț (gol = ajut de plăcere)">
+   <input name="contact" class="inp" placeholder="Contact (telefon / e-mail)">
+   <button class="btn" id="bPost">Publică</button></form>
+ </section>
+
+ <section id="v-mine" class="hidden"><h2 class="text-2xl font-bold mb-3">Anunțurile mele</h2><div id="mine" class="grid gap-3 md:grid-cols-2"></div></section>
+</main>
+
+<dialog id="dlg" class="card w-full max-w-sm"><form class="grid gap-3" onsubmit="submitAuth(event)">
+ <h3 id="dTitle" class="font-bold text-lg">Autentificare</h3>
+ <input id="aName" class="inp hidden" placeholder="Nume complet">
+ <input id="aMail" type="email" class="inp" placeholder="Email" required>
+ <input id="aPass" type="password" minlength="6" class="inp" placeholder="Parolă (min. 6)" required>
+ <button class="btn">Continuă</button>
+ <button type="button" class="text-sm text-teal-700" onclick="toggleReg()" id="aSwitch">Nu ai cont? Înregistrează-te</button>
+ <button type="button" class="text-sm text-slate-500" onclick="dlg.close()">Anulează</button></form></dialog>
+
+<script>
+let sb, session = null, reg = false;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const toast = m => { const t=$('toast'); t.textContent=m; t.classList.remove('hidden'); setTimeout(()=>t.classList.add('hidden'),4000); };
+
+async function api(path, opts = {}) {
+  const r = await fetch('/api' + path, { ...opts, headers: { 'Content-Type':'application/json',
+    ...(session ? { Authorization: 'Bearer ' + session.access_token } : {}) } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Eroare server');
+  return j;
+}
+
+function show(v) {
+  if ((v === 'post' || v === 'mine') && !session) { toast('Intră în cont mai întâi.'); return openAuth(); }
+  ['search','post','mine'].forEach(k => $('v-'+k).classList.toggle('hidden', k !== v));
+  if (v === 'mine') loadMine();
+}
+
+/* ---- Auth Supabase ---- */
+function openAuth() { dlg.showModal(); }
+function toggleReg() { reg = !reg; $('aName').classList.toggle('hidden', !reg); $('dTitle').textContent = reg ? 'Cont nou' : 'Autentificare';
+  $('aSwitch').textContent = reg ? 'Ai deja cont? Intră' : 'Nu ai cont? Înregistrează-te'; }
+async function submitAuth(e) {
+  e.preventDefault();
+  const email = $('aMail').value, password = $('aPass').value;
+  const { data, error } = reg
+    ? await sb.auth.signUp({ email, password, options: { data: { full_name: $('aName').value } } })
+    : await sb.auth.signInWithPassword({ email, password });
+  if (error) return toast(error.message);
+  if (reg && !data.session) { dlg.close(); return toast('Verifică e-mailul pentru confirmare, apoi intră în cont.'); }
+  dlg.close(); toast('Bine ai venit!');
+}
+function authBtn() { session ? sb.auth.signOut() : openAuth(); }
+function refreshAuthUI() {
+  $('bAuth').textContent = session ? 'Ieși' : 'Intră';
+  $('bMine').classList.toggle('hidden', !session);
+}
+
+/* ---- Căutare ---- */
+async function search() {
+  const p = new URLSearchParams({ from:$('qFrom').value, to:$('qTo').value, date:$('qDate').value, type:$('qType').value });
+  try {
+    const rows = await api('/listings?' + p);
+    $('list').innerHTML = rows.map(l => `<article class="card">
+      <div class="flex justify-between"><span class="badge">${l.type==='trip'?'🚗 Cursă':'📦 Colet'}</span><b class="text-teal-700">${esc(l.price_text) || (l.type==='trip'?'Gratuit / favor':'')}</b></div>
+      <div class="text-lg font-bold mt-2">${esc(l.from_city)} → ${esc(l.to_city)}</div>
+      <div class="text-sm text-slate-500">${esc(l.travel_date||'')} ${esc(l.travel_time||'')} · ${esc(l.transport||'')} · Mărime: ${esc(l.size||'')}</div>
+      <p class="mt-2 text-sm">${esc(l.description)}</p>
+      <div class="text-xs text-slate-500 mt-2">de ${esc(l.profiles?.full_name || 'Utilizator')}</div></article>`).join('')
+      || '<p class="text-slate-500">Niciun anunț găsit.</p>';
+  } catch (e) { toast(e.message); }
+}
+
+/* ---- Postare + redirect Stripe ---- */
+async function post(e) {
+  e.preventDefault(); const btn = $('bPost'); btn.disabled = true;
+  try {
+    const r = await api('/listings', { method:'POST', body: JSON.stringify(Object.fromEntries(new FormData(e.target))) });
+    if (r.checkout_url) { toast('Al doilea anunț: te ducem la plată (5 lei)…'); return location.href = r.checkout_url; }
+    e.target.reset(); toast('Anunț gratuit publicat! 🎉'); show('search'); search();
+  } catch (err) { toast(err.message); } finally { btn.disabled = false; }
+}
+
+/* ---- Anunțurile mele ---- */
+async function loadMine() {
+  const rows = await api('/my-listings');
+  $('mine').innerHTML = rows.map(l => `<article class="card">
+    <span class="badge" style="${l.is_paid?'':'background:#fef3c7;color:#92400e'}">${l.is_paid?'Activ':'Neplătit – nevizibil'}</span>
+    <div class="font-bold mt-2">${esc(l.from_city)} → ${esc(l.to_city)}</div><p class="text-sm">${esc(l.description)}</p>
+    ${l.is_paid ? '' : `<button class="btn mt-2" onclick="pay('${l.id}')">Plătește 5 lei</button>`}</article>`).join('') || '<p class="text-slate-500">Nu ai anunțuri.</p>';
+}
+async function pay(id) { try { location.href = (await api(`/listings/${id}/checkout`, { method:'POST' })).checkout_url; } catch (e) { toast(e.message); } }
+
+/* ---- Init ---- */
+(async () => {
+  const cfg = await (await fetch('/api/config')).json();
+  sb = supabase.createClient(cfg.url, cfg.anon);
+  const { data } = await sb.auth.getSession(); session = data.session; refreshAuthUI();
+  sb.auth.onAuthStateChange((_, s) => { session = s; refreshAuthUI(); if (!s) show('search'); });
+  const q = new URLSearchParams(location.search);
+  if (q.get('paid') && session) {   // confirmare de rezervă dacă webhook-ul întârzie
+    try { await api(`/listings/${q.get('listing')}/confirm`, { method:'POST', body: JSON.stringify({ session_id:q.get('session_id') }) });
+      toast('Plată confirmată! Anunțul este activ. ✅'); } catch (e) { toast(e.message); }
+    history.replaceState({}, '', '/');
+  } else if (q.get('canceled')) { toast('Plată anulată. Anunțul rămâne nepublicat în „Anunțurile mele”.'); history.replaceState({}, '', '/'); }
+  search();
+})();
+</script></body></html>
